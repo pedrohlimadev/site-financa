@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-10-18T19:32:55Z",
+  "expenses": [
+    [
+      "Internet",
+      150,
+      "Conectividade"
+    ],
+    [
+      "Plano de saúde",
+      530,
+      "Saúde e bem-estar"
+    ],
+    [
+      "Personal",
+      360,
+      "Saúde e bem-estar"
+    ],
+    [
+      "Psicólogo",
+      240,
+      "Saúde e bem-estar"
+    ],
+    [
+      "Entrada do apartamento",
+      1500,
+      "Moradia"
+    ],
+    [
+      "Faculdade",
+      300,
+      "Educação"
+    ],
+    [
+      "ChatGPT",
+      99.9,
+      "Assinaturas"
+    ],
+    [
+      "Cursor",
+      360,
+      "Assinaturas"
+    ],
+    [
+      "Wispr Flow",
+      90,
+      "Assinaturas"
+    ]
+  ],
+  "include": false,
+  "saving": 2000,
+  "months": 15
+}
