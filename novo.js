@@ -11,7 +11,7 @@ const key=(i,m)=>i.id+'@'+m;
 const now=ym(new Date());$('month').value=now;$('entryMonth').value=now;
 function msg(s){$('status').textContent=s}
 function validate(x){if(!x||x.schemaVersion!==1||!Array.isArray(x.items)||x.items.length>10000||!x.settled||typeof x.settled!=='object'||Array.isArray(x.settled))throw Error('Backup não reconhecido.');const ids=new Set();for(const v of x.items){if(!v||typeof v.id!=='string'||ids.has(v.id)||!['income','expense'].includes(v.kind)||typeof v.description!=='string'||!v.description.trim()||!Number.isFinite(v.amount)||v.amount<=0||!/^\d{4}-(0[1-9]|1[0-2])$/.test(v.date)||!['once','monthly','installment'].includes(v.frequency)||!Number.isInteger(v.count)||v.count<1||v.count>360)throw Error('Lançamentos inválidos.');ids.add(v.id)}return {schemaVersion:1,items:x.items,settled:x.settled}}
-function authHeaders(){return {apikey:KEY,Authorization:'Bearer '+(session?.access_token||KEY),'Content-Type':'application/json'}}
+function authHeaders(){return {apikey:KEY,...(session?.access_token?{Authorization:'Bearer '+session.access_token}:{}),'Content-Type':'application/json'}}
 function errorText(s,p){return p?.msg||p?.message||p?.error_description||('Erro HTTP '+s)}
 async function request(path,options={}){const r=await fetch(URL+path,{...options,headers:{...authHeaders(),...(options.headers||{})}});const t=await r.text();let body;try{body=t?JSON.parse(t):null}catch{body={message:t}}if(!r.ok)throw Error(errorText(r.status,body));return body}
 function setSession(x){session=x;if(x)sessionStorage.setItem('finance_session',JSON.stringify(x));else sessionStorage.removeItem('finance_session');$('loginPanel').hidden=!!x;$('workspace').hidden=!x;$('who').textContent=x?.user?.email||''}
