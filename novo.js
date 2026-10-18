@@ -44,6 +44,65 @@ $('signout').onclick=()=>{if(dirty&&!confirm('Sair sem salvar as alterações?')
 $('save').onclick=save;$('refresh').onclick=()=>{if(dirty&&!confirm('Descartar alterações não salvas?'))return;load()};
 $('download').onclick=()=>{const blob=new Blob([JSON.stringify({...data,updatedAt:new Date().toISOString()},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='financas-backup-'+now+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
 $('import').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{if(f.size>3000000)throw Error('Arquivo muito grande.');const x=validate(JSON.parse(await f.text()));if(confirm('Substituir lançamentos atuais pelo backup?')){data=x;dirtyRender()}}catch(err){msg('Importação: '+err.message)}finally{e.target.value=''}};
+
+let pendingCards=[];
+function csvRows(content){
+ const first=content.replace(/^\uFEFF/,'');
+ const lines=first.split(/\r?\n/).filter(x=>x.trim());
+ const firstLine=lines[8]||lines[0]||'';
+ const delim=(firstLine.match(/;/g)||[]).length>(firstLine.match(/,/g)||[]).length?';':',';
+ const out=[];let row=[],value='',quoted=false;
+ for(let p=0;p<first.length;p++){const c=first[p];if(c==='"'){if(quoted&&first[p+1]==='"'){value+='"';p++}else quoted=!quoted}else if(c===delim&&!quoted){row.push(value);value=''}else if((c==='\n'||c==='\r')&&!quoted){if(c==='\r'&&first[p+1]==='\n')p++;row.push(value);out.push(row);row=[];value=''}else value+=c}
+ if(value||row.length){row.push(value);out.push(row)}return out;
+}
+function brAmount(x){
+ if(typeof x==='number')return x;
+ const str=String(x||'').replace(/R\$|\s/g,'');
+ if(!str)return NaN;
+ const normalized=str.includes(',')?str.replace(/\./g,'').replace(',','.'):str;
+ return Number(normalized);
+}
+function monthFromCsv(s){
+ if(typeof s==='number'){const d=new Date(Date.UTC(1899,11,30)+s*86400000);return d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0')}
+ const v=String(s||'').trim();const d=v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);if(d)return d[3]+'-'+d[2].padStart(2,'0');
+ if(/^\d{4}-\d{2}/.test(v))return v.slice(0,7);
+ if(/^\d{5}$/.test(v))return monthFromCsv(Number(v));return null;
+}
+function prepareCsv(csv){
+ const rows=csvRows(csv),found=[],issues=[];
+ if(!rows.some(r=>String(r[2]||'').trim()==='Descrição'&&String(r[5]||'').includes('Valor total')))throw Error('CSV inválido: exporte a aba Cartões inteira, sem remover colunas.');
+ for(let index=9;index<rows.length;index++){
+ const r=rows[index],line=index+1;
+ const desc=(r[2]||'').trim(),account=(r[1]||'').trim(),amt=brAmount(r[5]),m=monthFromCsv(r[7]);
+ if(desc&&account&&Number.isFinite(amt)&&amt>0){
+  const count=Number(r[6])||1,rec=String(r[4]||'').toLowerCase().includes('parcel')&&count>1;
+  if(!m||!Number.isInteger(count)||count<1||count>360){issues.push('Linha '+line+' com data/parcelas inválidas');continue}
+  const id='sheets-card-purchase-'+line;
+  found.push({id,description:desc,kind:'expense',amount:Math.round(amt*100/count)/100,date:m,category:(r[3]||'Outros').trim()||'Outros',frequency:rec?'installment':'once',count:rec?count:1,account,source:'Google Sheets Cartões',totalAmount:Math.round(amt*100)/100});
+ }else if(desc&&account&&r[5]&&!Number.isFinite(amt)){issues.push('Linha '+line+' com valor inválido')}
+ const subDesc=(r[13]||'').trim(),subAccount=(r[12]||'').trim(),subAmt=brAmount(r[15]),subM=monthFromCsv(r[16]),end=monthFromCsv(r[17]);
+ if(subDesc&&subAccount&&Number.isFinite(subAmt)&&subAmt>0){if(!subM){issues.push('Assinatura da linha '+line+' com data inválida');continue}
+  found.push({id:'sheets-card-recurring-'+line,description:subDesc,kind:'expense',amount:Math.round(subAmt*100)/100,date:subM,category:(r[14]||'Assinaturas').trim()||'Assinaturas',frequency:end?'installment':'monthly',count:end?Math.max(1,ix(end)-ix(subM)+1):1,account:subAccount,source:'Google Sheets Cartões'});
+ }
+ }
+ if(!found.length)throw Error('Nenhuma compra ou assinatura válida encontrada. Confira se exportou a aba Cartões em CSV.');
+ return {items:found,issues};
+}
+$('cardCsv').onchange=async e=>{pendingCards=[];$('confirmCards').disabled=true;const f=e.target.files[0];if(!f)return;try{
+ if(f.size>2e6)throw Error('O arquivo deve ter no máximo 2 MB.');
+ const parsed=prepareCsv(await f.text()),existing=new Set(data.items.map(i=>i.id));
+ pendingCards=parsed.items.filter(i=>!existing.has(i.id));$('confirmCards').disabled=!pendingCards.length;
+ $('cardPreview').textContent=parsed.items.length+' registros identificados; '+pendingCards.length+' novos; '+(parsed.items.length-pendingCards.length)+' já importados.'+(parsed.issues.length?' Atenção: '+parsed.issues.join('; '):'')+' Revise sua planilha antes de confirmar.';
+ }catch(err){$('cardPreview').textContent='Não foi possível importar: '+err.message}finally{e.target.value=''}};
+$('confirmCards').onclick=async()=>{
+ if(!pendingCards.length)return;
+ if(dirty){msg('Salve ou descarte as alterações pendentes antes de importar.');return}
+ if(!await ensureSession()){msg('Entre novamente para importar.');return}
+ if(!confirm('Importar '+pendingCards.length+' lançamentos do cartão para o Supabase privado? Os lançamentos existentes serão preservados.'))return;
+ const before=JSON.parse(JSON.stringify(data));const current=new Set(data.items.map(i=>i.id));data.items.push(...pendingCards.filter(i=>!current.has(i.id)));dirtyRender();await save();
+ if(dirty){data=before;render();msg('Falha no salvamento: os dados anteriores continuam no banco. Confira a conexão e tente novamente.')}else{pendingCards=[];$('confirmCards').disabled=true;$('cardPreview').textContent='Importação salva no Supabase. Confira os registros na aba Cartões.'}
+};
+
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue=''}});
 (async()=>{try{const old=JSON.parse(sessionStorage.getItem('finance_session')||'null');if(old){setSession(old);await load()}else setSession(null)}catch{setSession(null)}})();render();
 })();
